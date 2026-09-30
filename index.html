@@ -41,19 +41,38 @@ input{font:inherit;width:100%;padding:11px;border-radius:10px;border:1px solid v
 @keyframes drop{from{transform:translateY(-40px) scale(1.3);opacity:0}}
 @keyframes flip{from{transform:rotateY(90deg) scale(.7)}}
 details{margin-top:8px}summary{cursor:pointer;color:var(--gold)}
+@keyframes shake{25%{transform:translateX(-7px)}75%{transform:translateX(7px)}}body.shake{animation:shake .5s}
+@keyframes deal{from{transform:translateY(40px) rotate(8deg);opacity:0}}.deal{animation:deal .4s both}
+@keyframes rise{to{transform:translateY(-115vh) rotate(360deg);opacity:0}}
+.fx{position:fixed;bottom:-30px;font-size:28px;pointer-events:none;z-index:11;animation:rise 2.4s ease-in forwards}
+@keyframes pulse{50%{box-shadow:0 0 24px #ff5a1fdd}}.pl.turn{animation:pulse 1.2s infinite}.cd:hover{transform:translateY(-4px)}
 </style>
 </head>
 <body>
-<h1>🌶️ Acı Blöf</h1>
+<div style="display:flex;justify-content:space-between;align-items:center"><h1>🌶️ Acı Blöf</h1><button id="mu" onclick="muted=!muted;this.textContent=muted?'🔇':'🔊'">🔊</button></div>
 <div id="app"></div><div id="toast"></div>
 <script>
 const FB={apiKey:"AIzaSyAC1XEtX4pWLN00kvEB4lQtPQ1HM783j2Q",authDomain:"oyun-8eb3c.firebaseapp.com",databaseURL:"https://oyun-8eb3c-default-rtdb.firebaseio.com",projectId:"oyun-8eb3c"};
 const SP={c:{n:'Acı Biber',e:'🌶️',cl:'#d62828'},w:{n:'Wasabi',e:'🥬',cl:'#2a9d3f'},p:{n:'Karabiber',e:'⚫',cl:'#4a4a5c'}};
 const EMO=['😏','🤨','🔥','😱','😂','👏'];
+let AC=null,muted=false;
+function snd(k){
+  if(muted)return;
+  try{
+    AC=AC||new (window.AudioContext||window.webkitAudioContext)();if(AC.state==='suspended')AC.resume();
+    const t=AC.currentTime,tone=(f,d,ty,v,at,f2)=>{const o=AC.createOscillator(),g=AC.createGain();o.type=ty||'sine';o.frequency.setValueAtTime(f,t+(at||0));if(f2)o.frequency.exponentialRampToValueAtTime(f2,t+(at||0)+d);g.gain.setValueAtTime(v||.14,t+(at||0));g.gain.exponentialRampToValueAtTime(.001,t+(at||0)+d);o.connect(g);g.connect(AC.destination);o.start(t+(at||0));o.stop(t+(at||0)+d)};
+    ({click:()=>tone(620,.06,'triangle'),drop:()=>tone(200,.14,'square',.1,0,80),turn:()=>{tone(784,.1);tone(1046,.14,'sine',.12,.1)},
+      alarm:()=>{tone(720,.16,'sawtooth',.11);tone(480,.28,'sawtooth',.11,.16)},win:()=>[523,659,784,1046].forEach((f,i)=>tone(f,.22,'triangle',.14,i*.1)),
+      lose:()=>tone(320,.45,'sawtooth',.1,0,110),coin:()=>{tone(988,.08,'square',.09);tone(1319,.3,'square',.09,.08)}})[k]();
+  }catch(e){}
+}
+function burst(a){for(let i=0;i<22;i++){const e=document.createElement('span');e.className='fx';e.textContent=a[i%a.length];e.style.left=Math.random()*95+'vw';e.style.animationDelay=Math.random()*.6+'s';document.body.appendChild(e);setTimeout(()=>e.remove(),3200)}}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let DB=null,cid=null,code='',isHost=false,G=null,V=null,hand=[],me=-1,mode='start',err='',nameVal='',codeVal='';
 let sel=-1,dn=1,ds='c',lastEmo=0,lastRes=0,resUntil=0,lastSt=0;
+let local=false,botMode=false,cover=false,lastCtl=-1,lc=3,lb=2,lh=0,prev={st:0,turn:-1,tr:0,ph:''};
+const lnames=['Oyuncu 1','Oyuncu 2','Oyuncu 3','Oyuncu 4','Oyuncu 5','Oyuncu 6'];
 try{nameVal=localStorage.getItem('sp-name')||''}catch(e){}
 
 /* ---------- Bağlantı ---------- */
@@ -71,12 +90,17 @@ const saveName=()=>{try{localStorage.setItem('sp-name',nameVal)}catch(e){}};
 async function host(){
   err='';if(!nameVal.trim()){err='Önce adını yaz.';return render()}
   if(!await fbReady())return render();
-  saveName();isHost=true;code=genCode();
-  G={phase:'lobby',players:[{id:cid,name:nameVal.trim().slice(0,16),hand:[],won:0,tr:0}],deck:[],stack:[],turn:0,trLeft:3,pend:null,log:[],emo:null,res:null,over:null};
+  saveName();isHost=true;local=false;botMode=false;code=genCode();
+  G={phase:'lobby',players:[{id:cid,name:nameVal.trim().slice(0,16),hand:[],won:0,tr:0}],deck:[],stack:[],turn:0,trLeft:3,pend:null,log:[],emo:null,res:null,over:null,specs:[]};
   try{await R().remove()}catch(e){}
   R('actions').on('child_added',s=>{
     const m=s.val();s.ref.remove();if(!m)return;
-    if(m.t==='join'){if(G.phase==='lobby'&&G.players.length<8&&!G.players.some(p=>p.id===m.from)){G.players.push({id:m.from,name:String(m.name).slice(0,16),hand:[],won:0,tr:0});broadcast()}}
+    if(m.t==='join'){
+      if(G.players.some(p=>p.id===m.from)||G.specs.some(p=>p.id===m.from))return;
+      const nv=String(m.name).slice(0,16);
+      if(G.phase==='lobby'&&G.players.length<8)G.players.push({id:m.from,name:nv,hand:[],won:0,tr:0});else G.specs.push({id:m.from,name:nv});
+      broadcast();
+    }
     else{const i=G.players.findIndex(p=>p.id===m.from);if(i>=0)handle(i,m)}
   });
   mode='game';broadcast();
@@ -84,21 +108,25 @@ async function host(){
 async function joinRoom(){
   err='';if(!nameVal.trim()||!codeVal.trim()){err='Adını ve oda kodunu yaz.';return render()}
   if(!await fbReady())return render();
-  saveName();code=codeVal.trim().toLocaleUpperCase('en-US').replace(/İ/g,'I');mode='connecting';render();
+  saveName();local=false;botMode=false;code=codeVal.trim().toLocaleUpperCase('en-US').replace(/İ/g,'I');mode='connecting';render();
   let first=true,joined=false;
   R('state').on('value',s=>{
     const v=s.val();
-    if(!v){if(first){err='Oda bulunamadı. Kodu kontrol et.';mode='start';R('state').off();render()}first=false;return}
+    if(!v){if(first){err='Oda bulunamadı. Kodu kontrol et.';mode='online';R('state').off();render()}first=false;return}
     first=false;V=v;me=(V.ids||[]).indexOf(cid);
     if(me<0){
-      if(V.ph==='lobby'&&!joined){joined=true;R('actions').push({t:'join',name:nameVal.trim(),from:cid})}
-      else if(V.ph!=='lobby'){err='Oyun başlamış, katılamazsın.';mode='start';R('state').off();V=null;render();return}
+      if(!joined){joined=true;R('actions').push({t:'join',name:nameVal.trim(),from:cid})}
+      if(V.ph!=='lobby'&&!(V.spi||[]).includes(cid))return;
     }
     mode='game';render();
-  },e=>{err='Bağlantı hatası: '+e.message;mode='start';render()});
+  },e=>{err='Bağlantı hatası: '+e.message;mode='online';render()});
   R('hand/'+cid).on('value',s=>{hand=s.val()||[];render()});
 }
-const act=m=>isHost?handle(0,m):R('actions').push(Object.assign({},m,{from:cid}));
+const act=m=>{
+  snd('click');
+  if(local&&m.t==='again'){handle(0,m);handle(0,{t:'start'});return}
+  if(isHost)handle(local&&!botMode?ctl():0,m);else R('actions').push(Object.assign({},m,{from:cid}));
+};
 
 /* ---------- Oyun mantığı (yalnızca kurucuda) ---------- */
 function mkDeck(){
@@ -139,7 +167,7 @@ function play(i,m){
   if(ok)ok=!top?n<=3:(s===top.s&&(top.n===10?n<=3:n>top.n));
   if(!ok){log(P.name+' geçersiz beyan yaptı, pas geçti');draw(P,1);G.turn=(i+1)%G.players.length;return}
   P.hand.splice(m.c,1);G.stack.push({c,by:i,decl:{n,s}});log(P.name+': '+n+' '+SP[s].n);
-  if(!P.hand.length){G.phase='trophy';G.pend={by:i,ok:{},until:Date.now()+9000}}
+  if(!P.hand.length){G.phase='trophy';G.pend={by:i,ok:{},until:Date.now()+(G.slow?1e9:10000)}}
   else G.turn=(i+1)%G.players.length;
 }
 function chal(i,w){
@@ -157,7 +185,7 @@ function chal(i,w){
 function handle(i,m){
   if(m.t==='emo'){if(!EMO.includes(m.e))return;G.emo={i,e:m.e,ts:Date.now()}}
   else if(G.phase==='lobby'){if(m.t==='start'&&i===0&&G.players.length>=2)start();else return}
-  else if(G.phase==='over'){if(m.t==='again'&&i===0)G.phase='lobby';else return}
+  else if(G.phase==='over'){if(m.t==='again'&&i===0){G.specs.forEach(x=>G.players.push({id:x.id,name:x.name,hand:[],won:0,tr:0}));G.specs=[];G.phase='lobby'}else return}
   else if(m.t==='play'&&G.phase==='play'&&G.turn===i)play(i,m);
   else if(m.t==='pass'&&G.phase==='play'&&G.turn===i){draw(G.players[i],1);log(G.players[i].name+' pas geçti');if(G.phase==='play')G.turn=(i+1)%G.players.length}
   else if(m.t==='chal'&&(G.phase==='play'||G.phase==='trophy'))chal(i,m.w);
@@ -167,11 +195,35 @@ function handle(i,m){
 }
 function broadcast(){
   const t=G.stack[G.stack.length-1];
-  V={ph:G.phase,host:G.players[0].id,ids:G.players.map(p=>p.id),pl:G.players.map(p=>({n:p.name,h:p.hand.length,w:p.won,t:p.tr})),st:G.stack.length,top:t?t.decl:null,topBy:t?t.by:null,turn:G.turn,dk:G.deck.length,tl:G.trLeft,pend:G.pend?G.pend.by:null,pok:G.pend?Object.keys(G.pend.ok).map(Number):null,log:G.log.slice(-6),emo:G.emo,res:G.res,over:G.over};
+  V={ph:G.phase,host:G.players[0].id,sp:G.specs.length,spi:G.specs.map(x=>x.id),ids:G.players.map(p=>p.id),pl:G.players.map(p=>({n:p.name,h:p.hand.length,w:p.won,t:p.tr})),st:G.stack.length,top:t?t.decl:null,topBy:t?t.by:null,turn:G.turn,dk:G.deck.length,tl:G.trLeft,pend:G.pend?G.pend.by:null,pok:G.pend?Object.keys(G.pend.ok).map(Number):null,log:G.log.slice(-6),emo:G.emo,res:G.res,over:G.over};
+  if(local){me=botMode?0:ctl();hand=G.players[me].hand;if(!botMode){if(me!==lastCtl)cover=true;lastCtl=me}render();return}
   R('state').set(V).catch(e=>{err='Veritabanına yazılamadı ('+(e.code||e.message)+').';render()});
   G.players.forEach(p=>R('hand/'+p.id).set(p.hand.length?p.hand:null).catch(()=>{}));
   me=0;hand=G.players[0].hand;render();
 }
+const ctl=()=>{if(!G||G.phase==='over')return 0;if(G.phase==='trophy'){const k=G.players.findIndex((p,j)=>j!==G.pend.by&&!G.pend.ok[j]);return k<0?G.pend.by:k}return G.turn};
+function startLocal(bot){
+  err='';local=true;botMode=bot;isHost=true;if(bot)saveName();
+  const names=bot?[(nameVal.trim()||'Sen').slice(0,16)].concat(['Acı Bot','Wasabi Bot','Karabiber Bot'].slice(0,lb)):lnames.slice(0,lc).map(n=>n.trim()||'Oyuncu');
+  G={phase:'lobby',players:names.map((n,i)=>({id:'p'+i,name:n,bot:bot&&i>0,hand:[],won:0,tr:0})),deck:[],stack:[],turn:0,trLeft:3,pend:null,log:[],emo:null,res:null,over:null,specs:[],slow:!bot};
+  mode='game';lastCtl=-1;prev={st:0,turn:-1,tr:0,ph:''};handle(0,{t:'start'});
+}
+function botMove(i){
+  const P=G.players[i],t=G.stack.length?G.stack[G.stack.length-1]:null,top=t?t.decl:null;
+  if(top&&t.by!==i&&Math.random()<(top.n>=8?.45:top.n>=5?.25:.12)){handle(i,{t:'chal',w:Math.random()<.6?'n':'s'});return}
+  if(!P.hand.length||Math.random()<.18){handle(i,{t:'pass'});return}
+  const al=top?{n:top.n===10?[1,2,3]:Array.from({length:10-top.n},(_,k)=>top.n+1+k),s:[top.s]}:{n:[1,2,3],s:['c','w','p']};
+  let ci=-1,dn2,ds2;
+  for(let k=0;k<P.hand.length&&ci<0;k++){const c=P.hand[k];if(SP[c.s]&&typeof c.n==='number'&&al.s.includes(c.s)&&al.n.includes(c.n)){ci=k;dn2=c.n;ds2=c.s}}
+  if(ci<0){ci=Math.floor(Math.random()*P.hand.length);dn2=al.n[0];ds2=al.s[Math.floor(Math.random()*al.s.length)]}
+  handle(i,{t:'play',c:ci,n:dn2,s:ds2});
+}
+function botTick(){
+  if(!local||!botMode||!G)return;
+  if(G.phase==='play'&&G.players[G.turn].bot)botMove(G.turn);
+  else if(G.phase==='trophy'){const k=G.players.findIndex((p,j)=>p.bot&&j!==G.pend.by&&!G.pend.ok[j]);if(k>=0){if(Math.random()<.15)handle(k,{t:'chal',w:Math.random()<.5?'n':'s'});else handle(k,{t:'ok'})}}
+}
+setInterval(botTick,1400);
 setInterval(()=>{if(isHost&&G&&G.phase==='trophy'&&Date.now()>G.pend.until){settle();broadcast()}},500);
 
 /* ---------- Arayüz ---------- */
@@ -181,20 +233,36 @@ const cardH=(c,cls)=>{
   return `<div class="cd ${cls||''}" style="--c:${col}"><b>${top}</b><i>${ic}</i></div>`;
 };
 const allowed=()=>!V.top?{n:[1,2,3],s:['c','w','p']}:{n:V.top.n===10?[1,2,3]:Array.from({length:10-V.top.n},(_,k)=>V.top.n+1+k),s:[V.top.s]};
-const pick=i=>{sel=sel===i?-1:i;render()};
+const pick=i=>{snd('click');sel=sel===i?-1:i;render()};
 const doPlay=()=>{act({t:'play',c:sel,n:dn,s:ds});sel=-1};
 function toast(t){const x=$('toast');x.innerHTML='<span>'+t+'</span>';clearTimeout(toast.t);toast.t=setTimeout(()=>x.innerHTML='',2500)}
 function watch(){
   if(mode!=='game'||!V)return;
+  const trs=V.pl.reduce((x,p)=>x+p.t,0);
+  if(prev.ph&&prev.ph!=='lobby'){
+    if(V.st>prev.st)snd('drop');
+    if(V.ph==='play'&&V.turn===me&&prev.turn!==me&&!(local&&!botMode))snd('turn');
+    if(trs>prev.tr){snd('coin');burst(['🏆','✨'])}
+    if(V.ph==='over'&&prev.ph!=='over'){snd('win');burst(['🎉','🌶️','🔥'])}
+  }
+  prev={st:V.st,turn:V.turn,tr:trs,ph:V.ph};
   const e=V.emo;if(lastEmo===0)lastEmo=e?e.ts:-1;else if(e&&e.ts!==lastEmo){lastEmo=e.ts;toast(esc(V.pl[e.i]?V.pl[e.i].n:'?')+' '+esc(e.e))}
-  const r=V.res;if(lastRes===0)lastRes=r?r.ts:-1;else if(r&&r.ts!==lastRes){lastRes=r.ts;resUntil=Date.now()+3600;setTimeout(render,3700)}
+  const r=V.res;if(lastRes===0)lastRes=r?r.ts:-1;else if(r&&r.ts!==lastRes){lastRes=r.ts;resUntil=Date.now()+3600;setTimeout(render,3700);snd('alarm');document.body.classList.add('shake');setTimeout(()=>document.body.classList.remove('shake'),500);setTimeout(()=>snd(r.win===me?'win':'lose'),700)}
 }
 function render(){
   watch();const a=$('app');let h=err?`<div class="c2 warn">${esc(err)}</div>`:'';
   if(mode==='start'){
+    h+=`<div class="c2"><button class="go" style="width:100%" onclick="mode='online';render()">🌐 Online (arkadaşlarla, oda kodu)</button></div>
+    <div class="c2"><button style="width:100%" onclick="mode='lsetup';render()">📱 Yan yana (tek telefon)</button></div>
+    <div class="c2"><button style="width:100%" onclick="mode='bsetup';render()">🤖 Bota karşı</button></div><details class="c2"><summary>Nasıl oynanır?</summary><div class="mut" style="margin-top:8px;line-height:1.5">Herkes 6 kart alır. Sırası gelen bir kartı <b>kapalı</b> yığına atıp sayı ve baharat <b>söyler</b> (yalan olabilir). İlk kart 1-3 olmalı; sonrakiler aynı baharatta daha yüksek sayı olmalı, 10'dan sonra tekrar 1-3.<br>Sırası gelen <b>pas</b> geçip 1 kart çekebilir. <b>Herhangi biri</b> son kartı "sayı yanlış" ya da "baharat yanlış" diye sorgulayabilir. Söz doğruysa kartın sahibi, yanlışsa sorgulayan kazanır; kazanan yığını puan olarak alır, kaybeden 2 kart çeker ve yeni yığını başlatır.<br>Jokerler: 1-10 jokeri sayıda hep doğru, baharatta hep yanlış; 🌈 jokeri tersi.<br>Eldeki son kartı oynayan itiraz gelmezse 🏆 alır (+10 puan, 6 kart çeker). 2. kupa, son kupa ya da "Dünyanın Sonu" kartı oyunu bitirir. Puan = kazanılan kart + 10×kupa − eldeki kart.</div></details>`;
+  }else if(mode==='lsetup'){
+    h+=`<div class="c2"><div class="row"><span class="b" style="flex:2">Oyuncu sayısı</span><button onclick="lc=Math.max(2,lc-1);render()">−</button><span class="big c">${lc}</span><button onclick="lc=Math.min(6,lc+1);render()">+</button></div></div>${lnames.slice(0,lc).map((n,i)=>`<input value="${esc(n)}" oninput="lnames[${i}]=this.value">`).join('')}<button class="go" style="width:100%" onclick="startLocal(false)">Başlat</button><button style="width:100%;margin-top:8px" onclick="mode='start';render()">← Menü</button>`;
+  }else if(mode==='bsetup'){
+    h+=`<div class="c2"><input placeholder="Adın" value="${esc(nameVal)}" oninput="nameVal=this.value"><div class="row">${[1,2,3].map(k=>`<button class="ch${lb===k?' on':''}" onclick="lb=${k};render()">${k} bot</button>`).join('')}</div></div><button class="go" style="width:100%" onclick="startLocal(true)">Başlat</button><button style="width:100%;margin-top:8px" onclick="mode='start';render()">← Menü</button>`;
+  }else if(mode==='online'){
     h+=`<div class="c2"><input placeholder="Adın" value="${esc(nameVal)}" oninput="nameVal=this.value"><button class="go" style="width:100%" onclick="host()">Yeni oda kur</button></div>
     <div class="c2"><input placeholder="Oda kodu" value="${esc(codeVal)}" oninput="codeVal=this.value" autocapitalize="characters" autocorrect="off" style="text-transform:uppercase;font-family:ui-monospace,Menlo,monospace;letter-spacing:3px"><button style="width:100%" onclick="joinRoom()">Odaya katıl</button></div>
-    <details class="c2"><summary>Nasıl oynanır?</summary><div class="mut" style="margin-top:8px;line-height:1.5">Herkes 6 kart alır. Sırası gelen bir kartı <b>kapalı</b> yığına atıp sayı ve baharat <b>söyler</b> (yalan olabilir). İlk kart 1-3 olmalı; sonrakiler aynı baharatta daha yüksek sayı olmalı, 10'dan sonra tekrar 1-3.<br>Sırası gelen <b>pas</b> geçip 1 kart çekebilir. <b>Herhangi biri</b> son kartı "sayı yanlış" ya da "baharat yanlış" diye sorgulayabilir. Söz doğruysa kartın sahibi, yanlışsa sorgulayan kazanır; kazanan yığını puan olarak alır, kaybeden 2 kart çeker ve yeni yığını başlatır.<br>Jokerler: 1-10 jokeri sayıda hep doğru, baharatta hep yanlış; 🌈 jokeri tersi.<br>Eldeki son kartı oynayan itiraz gelmezse 🏆 alır (+10 puan, 6 kart çeker). 2. kupa, son kupa ya da "Dünyanın Sonu" kartı oyunu bitirir. Puan = kazanılan kart + 10×kupa − eldeki kart.</div></details>`;
+    `;
   }else if(mode==='connecting')h+='<div class="c2 mut">Bağlanıyor…</div>';
   else if(V&&V.ph==='lobby'){
     h+=`<div class="c2 c"><div class="mut">Oda kodu</div><div class="code">${me===0?code:'—'}</div>${me===0?'<div class="mut">Arkadaşların bu kodla katılsın</div>':''}</div>
@@ -202,8 +270,13 @@ function render(){
     h+=me===0?`<button class="go" style="width:100%" ${V.pl.length<2?'disabled':''} onclick="act({t:'start'})">Oyunu Başlat</button>`:'<div class="c2 mut c">Kurucunun oyunu başlatması bekleniyor…</div>';
   }else if(V){
     const al=allowed(),mine=V.turn===me&&V.ph==='play';
+    if(local&&!botMode&&cover&&Date.now()>=resUntil&&V.ph!=='over'){
+      h+=`<div class="c2 c" style="margin-top:20px"><div class="mut">Telefonu şuna ver</div><div class="code" style="font-size:26px;letter-spacing:0;margin:10px 0">${esc(V.pl[me].n)}</div>${V.ph==='trophy'?`<div class="mut">${esc(V.pl[V.pend].n)} son kartını oynadı, itiraz var mı?</div>`:V.top?`<div class="mut">Son beyan: ${V.top.n} ${SP[V.top.s].e}</div>`:''}<button class="go" style="width:100%;margin-top:12px" onclick="cover=false;snd('click');render()">Hazırım</button></div>`;
+      a.innerHTML=h;return;
+    }
     if(!al.s.includes(ds))ds=al.s[0];if(!al.n.includes(dn))dn=al.n[0];if(sel>=hand.length)sel=-1;
-    h+=`<div class="bar"><span>🂠 deste <b>${V.dk}</b></span><span>🏆 kalan <b>${V.tl}</b></span><span>${V.ph==='play'?'sıra: <b>'+esc(V.pl[V.turn].n)+'</b>':''}</span></div>`;
+    h+=`<div class="bar"><span>🂠 deste <b>${V.dk}</b></span><span>🏆 kalan <b>${V.tl}</b></span>${V.sp?`<span>👀 ${V.sp}</span>`:''}<span>${V.ph==='play'?'sıra: <b>'+esc(V.pl[V.turn].n)+'</b>':''}</span></div>`;
+    if(me<0)h+='<div class="c2 c warn">👀 Seyirci modundasın</div>';
     h+='<div class="pls">'+V.pl.map((p,i)=>`<div class="pl${V.turn===i&&V.ph==='play'?' turn':''}${i===me?' me':''}"><div class="b">${esc(p.n)}</div><div class="mut">✋${p.h} · 🃏${p.w}${p.t?' · '+'🏆'.repeat(p.t):''}</div></div>`).join('')+'</div>';
     const nn=Math.min(V.st,5);
     h+=`<div class="pile">${V.st?Array.from({length:nn},(_,k)=>`<div class="cd bk" style="left:${k*6}px;top:${-k*3+6}px${k===nn-1&&V.st!==lastSt?';animation:drop .35s':''}"></div>`).join(''):'<div class="mut c" style="padding-top:34px">Yığın boş</div>'}</div>`;
@@ -211,21 +284,21 @@ function render(){
     if(V.ph==='over'){
       h+=`<div class="c2"><div class="b big" style="margin-bottom:8px">🏁 ${esc(V.over.why)}</div>${V.pl.map((p,i)=>`<div class="${V.over.win.includes(i)?'win b':''}">${V.over.win.includes(i)?'🏆 ':''}${esc(p.n)}: ${V.over.sc[i]} puan <span class="mut">(kart ${p.w}, kupa ${p.t}, elde ${p.h})</span></div>`).join('')}${me===0?'<button class="go" style="width:100%;margin-top:10px" onclick="act({t:\'again\'})">Yeni oyun</button>':''}</div>`;
     }else{
-      if(V.ph==='trophy')h+=`<div class="c2 warn">🏆 <b>${esc(V.pl[V.pend].n)}</b> son kartını oynadı! İtiraz yoksa kupayı alır.${V.pend!==me&&!(V.pok||[]).includes(me)?`<button class="ok" onclick="act({t:'ok'})">Sorun yok ✔</button>`:''}</div>`;
-      if(V.st&&V.topBy!==me)h+=`<div class="row"><button class="dn" onclick="act({t:'chal',w:'n'})">🚨 Sayı yanlış!</button><button class="dn" onclick="act({t:'chal',w:'s'})">🚨 Baharat yanlış!</button></div>`;
+      if(V.ph==='trophy')h+=`<div class="c2 warn">🏆 <b>${esc(V.pl[V.pend].n)}</b> son kartını oynadı! İtiraz yoksa kupayı alır.${me>=0&&V.pend!==me&&!(V.pok||[]).includes(me)?`<button class="ok" onclick="act({t:'ok'})">Sorun yok ✔</button>`:''}</div>`;
+      if(me>=0&&V.st&&V.topBy!==me)h+=`<div class="row"><button class="dn" onclick="act({t:'chal',w:'n'})">🚨 Sayı yanlış!</button><button class="dn" onclick="act({t:'chal',w:'s'})">🚨 Baharat yanlış!</button></div>`;
       if(mine)h+=`<div class="c2" style="margin-top:10px"><div class="b">Sıra sende: kartı seç, beyan et</div>
         <div class="row">${al.n.map(x=>`<button class="ch${dn===x?' on':''}" onclick="dn=${x};render()">${x}</button>`).join('')}</div>
         <div class="row">${['c','w','p'].map(s=>`<button class="ch${ds===s?' on':''}" ${al.s.includes(s)?'':'disabled'} onclick="ds='${s}';render()">${SP[s].e} ${SP[s].n}</button>`).join('')}</div>
         <div class="row"><button class="go" ${sel<0?'disabled':''} onclick="doPlay()">Oyna: ${dn} ${SP[ds].e}</button><button onclick="act({t:'pass'})">Pas (+1 kart)</button></div></div>`;
     }
-    if(me>=0&&hand.length)h+=`<div class="mut" style="margin-top:8px">Elin (${hand.length})</div><div class="hand">${hand.map((c,i)=>`<div onclick="pick(${i})">${cardH(c,i===sel?'sel':'')}</div>`).join('')}</div>`;
+    if(me>=0&&hand.length&&!(local&&!botMode&&cover))h+=`<div class="mut" style="margin-top:8px">Elin (${hand.length})</div><div class="hand">${hand.map((c,i)=>`<div onclick="pick(${i})">${cardH(c,(i===sel?'sel ':'')+(hand.length>lh&&i>=lh?'deal':''))}</div>`).join('')}</div>`;
     if(me>=0)h+=`<div class="row">${EMO.map(e=>`<button onclick="act({t:'emo',e:'${e}'})">${e}</button>`).join('')}</div>`;
     h+=`<div class="c2 mut" style="margin-top:10px">${V.log.slice().reverse().map(esc).join('<br>')||'…'}</div>`;
     if(V.res&&Date.now()<resUntil){
       const r=V.res,nm=i=>esc(V.pl[i].n);
       h+=`<div class="ov"><div>${cardH(r.card,'big')}<div class="big b" style="margin:12px 0 4px">${r.right?'Kart doğruydu!':'Blöf yakalandı!'}</div><div class="mut">${nm(r.chal)}: "${r.w==='n'?'sayı':'baharat'} yanlış" dedi · Beyan: ${r.decl.n} ${SP[r.decl.s].n}</div><div style="margin-top:8px"><span class="win b">${nm(r.win)}</span> yığını aldı, <b>${nm(r.lose)}</b> 2 kart çekti</div></div></div>`;
     }
-    lastSt=V.st;
+    lastSt=V.st;lh=hand.length;
   }
   if(mode==='game')h+='<button style="width:100%;margin-top:12px" onclick="location.reload()">Ana menüye dön</button>';
   a.innerHTML=h;
